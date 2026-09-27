@@ -1,0 +1,482 @@
+<!-- 心跳：单文件网页，直接当 index.html 放到仓库根目录即可用 GitHub Pages 打开。
+     想改文字就在下面的 CONFIG 里改称呼 / 话 / 落款。 -->
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0a0507">
+<title>心跳</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='%23ff4676' d='M12 21.6C12 21.6 3.4 15.7 3.4 9.9c0-2.6 2.1-4.7 4.7-4.7 1.5 0 2.9.7 3.9 1.9a4.9 4.9 0 0 1 3.9-1.9c2.6 0 4.7 2.1 4.7 4.7 0 5.8-8.6 11.7-8.6 11.7z'/></svg>">
+<meta name="description" content="一颗随心跳跳动的爱心，由一段 C++ 代码画出来。">
+<meta property="og:title" content="心跳">
+<meta property="og:description" content="一颗随心跳跳动的爱心。">
+<meta property="og:type" content="website">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<style>
+  /* ============================================================
+     想改文字、心率，往下翻到 JS 里的 CONFIG
+     ============================================================ */
+  :root{
+    --bg:#0a0507;
+    --ink:#f4dfe4;
+    --dim:#8a6b74;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Courier New", monospace;
+    --cjk: "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:var(--mono);
+    overflow:hidden;
+    overscroll-behavior:none;
+    touch-action:none;
+    -webkit-tap-highlight-color:transparent;
+    user-select:none;
+    -webkit-user-select:none;
+  }
+  #stage{position:fixed;inset:0}
+
+  /* 心口的柔光，跟着心跳一起呼吸 */
+  #halo{
+    position:absolute; left:50%; top:0;
+    width:400px; height:400px;
+    border-radius:50%;
+    pointer-events:none;
+    transform:translate(-50%,-50%);
+    background:radial-gradient(circle,
+      rgba(255,68,112,.40) 0%,
+      rgba(200,26,68,.15) 38%,
+      rgba(10,5,7,0) 68%);
+    will-change:transform,opacity;
+  }
+  canvas{position:absolute; inset:0; width:100%; height:100%; display:block}
+
+  #readout{
+    position:absolute;
+    left:max(18px, env(safe-area-inset-left));
+    bottom:max(16px, env(safe-area-inset-bottom));
+    font-size:11px;
+    letter-spacing:.12em;
+    color:var(--dim);
+  }
+  #readout b{font-weight:600; color:#e9b9c6; font-variant-numeric:tabular-nums}
+
+  #say{
+    position:absolute; left:0; right:0; top:64%;
+    padding:0 28px;
+    text-align:center;
+    opacity:0;
+    transform:translateY(14px);
+    transition:opacity .9s cubic-bezier(.2,.7,.2,1), transform .9s cubic-bezier(.2,.7,.2,1);
+  }
+  #say.show{opacity:1; transform:none}
+  #who{
+    font-family:var(--cjk);
+    font-size:clamp(17px, 5.6vw, 23px);
+    letter-spacing:.12em;
+    text-indent:.12em;
+    color:#fff3f6;
+    margin-bottom:11px;
+  }
+  #msg{
+    font-family:var(--cjk);
+    font-size:clamp(16px, 5.2vw, 21px);
+    line-height:1.75;
+    letter-spacing:.06em;
+    color:#f8e8ec;
+  }
+  #sig{
+    margin-top:14px;
+    font-family:var(--mono);
+    font-size:11px;
+    letter-spacing:.14em;
+    color:var(--dim);
+  }
+
+  #hint{
+    position:absolute; left:0; right:0; top:82%;
+    text-align:center;
+    font-size:11px;
+    letter-spacing:.42em;
+    text-indent:.42em;
+    color:#6f555e;
+    animation:breathe 2.8s ease-in-out infinite;
+  }
+  #hint.gone{animation:none; opacity:0; transition:opacity .5s}
+  @keyframes breathe{0%,100%{opacity:.32} 50%{opacity:.85}}
+
+  /* 手机横过来时，字挪到心的右边，别压到心 */
+  @media (orientation: landscape) and (max-height: 560px){
+    #say{
+      left:54%; right:6%; top:50%; padding:0;
+      text-align:left;
+      transform:translateY(calc(-50% + 14px));
+    }
+    #say.show{transform:translateY(-50%)}
+    #hint{left:54%; right:6%; top:82%; text-align:left}
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    #hint{animation:none; opacity:.6}
+  }
+</style>
+</head>
+<body>
+<div id="stage" role="img" aria-label="一颗随心跳跳动的爱心">
+  <div id="halo"></div>
+  <canvas id="c"></canvas>
+  <div id="readout"><b id="bpm">62</b> bpm</div>
+  <div id="say">
+    <p id="who"></p>
+    <p id="msg"></p>
+    <p id="sig"></p>
+  </div>
+  <div id="hint">轻触屏幕</div>
+</div>
+
+<script>
+/* ================================================================
+   要改的地方都在这里
+   ================================================================ */
+const CONFIG = {
+  to:        "王晨旭",                // 第一行：写给谁，留空就不显示这一行
+  message:   "在学校也要好好吃饭 (>^ω^<)",   // 第二行：想说的话
+  signature: "",                     // 落款，留空就不显示这一行
+  restBpm:   62,                     // 平时的心率
+  excitedBpm:116,                    // 点一下之后的心率
+  excitedMs: 7000,                   // 心动能持续多久（毫秒）
+};
+
+/* ---------------- 爱心方程：(x²+y²-1)³ - x²y³ ≤ 0 为内部 ----------------
+   下面这些数字是量出来的，不是猜的：
+   心形的外框 x ∈ [-1.1385, 1.1385]，y ∈ [-0.9990, 1.2360]，
+   形状中心在 y = 0.1185（不在 0，所以要平移一下才不会偏） */
+const BOX = { w:2.2770, h:2.2350, cy:0.1185 };
+const W_DEPTH = 0.72;                  // 渐变里“由边缘向内变浅”占的比重
+const W_POS   = 0.28;                  // 渐变里“由下往上变浅”占的比重（想反过来深浅对调就改这里）
+const LEV_GAIN = 1.15;                 // 归一系数，让最深处正好吃到最浅那一档（量出来的）
+const NEAR = 1 << 20;                  // 距离场里“还没算”的占位值
+const SHIFT_DOWN = 2.0;                // 全闪时往暗的方向走几档
+const SHIFT_UP   = 3.0;                // 往亮的方向走几档
+                                       // 两边不对称：色带底下只有九档，
+                                       // 对称的话总有一头会卡住不动
+const PAL_FLOOR = [2, 1, 1];           // 再往下探的底线，压到近黑，最外沿也几乎熄掉再亮起
+
+const PAL = [                          // 由深到浅，一共九档
+  [ 70,  8, 22],
+  [104, 12, 34],
+  [142, 18, 48],
+  [182, 26, 66],
+  [220, 40, 88],
+  [246, 62,112],
+  [255, 96,142],
+  [255,150,182],
+  [255,214,228],
+];
+const LEVELS = PAL.length;             // 色带上的档数，跟着颜色表走
+const SUB = 24;                        // 档与档之间再细分这么多小格：九档直接相邻会看出一层层的边
+const GLYPH = '*';                     // 整颗心用同一个字。原先按深浅换 . : *，
+                                       // 换字的地方会在心底横着留下一道硬边，那道边就是台阶
+const SHALPHA = [0.90, 0.95, 1.0];     // 三档微闪，同一档的格子轮流换档，看着像在抖
+
+const stage  = document.getElementById('stage');
+const halo   = document.getElementById('halo');
+const cv     = document.getElementById('c');
+const ctx    = cv.getContext('2d');
+const bpmEl  = document.getElementById('bpm');
+const sayEl  = document.getElementById('say');
+const whoEl  = document.getElementById('who');
+const msgEl  = document.getElementById('msg');
+const sigEl  = document.getElementById('sig');
+const hintEl = document.getElementById('hint');
+
+const MONO = 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Courier New", monospace';
+const REDUCE = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* ---------------- 一块网格 ---------------- */
+let W=0, H=0, DPR=1, cols=0, rows=0, cellW=8, cellH=13, fontPx=13;
+let FONT='', s=100, cx=0, cy=0, x0=0, y0=0;
+let groups=[], stars=[];
+let N=0, dist=null, cells=null;        // 距离场用的两个数组
+
+/* 色带上的第 f 档，f 可以是小数，就在两档之间取中间色。
+   f 小于 0 时顺着最暗两档的走向继续往下探，这样最外沿也有明暗行程，
+   不然它会被卡在同一个颜色上、看着根本不闪 */
+function levelColor(f){
+  const top = LEVELS-1;
+  if (f > top) f = top;
+  if (f < 0){
+    const a = PAL[0], b = PAL[1];
+    const d = -f > SHIFT_DOWN ? SHIFT_DOWN : -f;
+    const out = [];
+    for (let i=0;i<3;i++){
+      let v = Math.round(a[i] + (a[i]-b[i])*d);
+      if (v < PAL_FLOOR[i]) v = PAL_FLOOR[i];
+      out.push(v);
+    }
+    return 'rgb(' + out[0] + ',' + out[1] + ',' + out[2] + ')';
+  }
+  const i = f|0, j = i < top ? i+1 : top, m = f - i;
+  const a = PAL[i], b = PAL[j];
+  return 'rgb(' + Math.round(a[0]+(b[0]-a[0])*m) + ',' +
+                  Math.round(a[1]+(b[1]-a[1])*m) + ',' +
+                  Math.round(a[2]+(b[2]-a[2])*m) + ')';
+}
+
+function layout(){
+  W = stage.clientWidth || innerWidth;
+  H = stage.clientHeight || innerHeight;
+  DPR = Math.min(devicePixelRatio || 1, 2);          // 高分屏最多按 2 倍画，手机上更省力
+  cv.width  = Math.round(W*DPR);
+  cv.height = Math.round(H*DPR);
+  cv.style.width  = W+'px';
+  cv.style.height = H+'px';
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  fontPx = Math.max(10, Math.min(17, H/62));         // 一行字符的高度
+  FONT = '600 ' + fontPx.toFixed(1) + 'px ' + MONO;
+  ctx.font = FONT;
+  cellW = ctx.measureText('*').width || fontPx*0.6;  // 用真实字宽，格子才对得齐
+  cellH = fontPx;
+
+  cols = Math.max(8, Math.floor(W/cellW));
+  rows = Math.max(8, Math.floor(H/cellH));
+  x0 = (W - cols*cellW)/2 + cellW/2;                 // 让整块网格居中
+  y0 = (H - rows*cellH)/2 + cellH/2;
+
+  const land = W > H;                                // 手机横过来时单独处理
+  const sW = (land ? 0.46 : 0.84)*W/BOX.w;           // 宽度方向能放多大
+  const sH = (land ? 0.78 : 0.40)*H/BOX.h;           // 高度方向能放多大
+  s  = Math.min(sW, sH);
+  cx = W*(land ? 0.27 : 0.5);
+  cy = H*(land ? 0.50 : 0.40);                       // 竖屏时心往上挪，底下留给两行字
+  halo.style.top = cy + 'px';
+  const d = Math.max(BOX.w, BOX.h)*s*1.75;
+  halo.style.width = halo.style.height = Math.round(d) + 'px';
+
+  groups = [];
+  for (let i=0;i<SUB*3;i++) groups.push({ a:new Float32Array(Math.ceil(cols*rows*2/6)), n:0 });
+  N = cols*rows;
+  dist = new Int32Array(N);
+  cells = new Int32Array(N);
+
+  stars = [];
+  const n = Math.round(Math.min(26, (W*H)/22000));
+  for (let i=0;i<n;i++){
+    stars.push({ x:Math.random()*W, y:Math.random()*H, p:Math.random()*6.283, v:0.5+Math.random()*0.9 });
+  }
+}
+
+/* 每个格子固定一个小随机数，用来决定它属于哪一档闪烁 */
+function hash(c,r){
+  let h = (c*73856093) ^ (r*19349663);
+  h = (h ^ (h>>>13)) >>> 0;
+  return h % 3;
+}
+
+/* 心跳曲线：一下“咚”加一下轻的“咚”，不是简单的正弦 */
+function beatAmp(p){
+  const a = Math.exp(-Math.pow((p-0.10)/0.055, 2));
+  const b = Math.exp(-Math.pow((p-0.30)/0.075, 2));
+  return Math.min(1, 0.78*a + 0.46*b);
+}
+
+function draw(amp, time, shift){
+  ctx.clearRect(0,0,W,H);
+
+  /* 背景里稀疏的星点，慢慢闪 */
+  for (let i=0;i<stars.length;i++){
+    const st = stars[i];
+    const a = 0.05 + 0.16*(0.5+0.5*Math.sin(time*st.v + st.p));
+    ctx.globalAlpha = a;
+    ctx.fillStyle = 'rgb(255,196,214)';
+    ctx.font = FONT;
+    ctx.fillText('.', st.x, st.y);
+  }
+  ctx.globalAlpha = 1;
+
+  for (let g=0;g<groups.length;g++) groups[g].n = 0;
+
+  /* 把每个格子映射到数学坐标，落在爱心里的就按深浅分档 */
+  const grow = 1 + 0.055*amp;
+  const ss = s*grow, inv = 1/ss;
+  const step = Math.floor(time*1.1);
+
+  /* 第一遍：挑出落在心形里的格子 */
+  dist.fill(0);                                  // 0 表示心外面
+  let cellN = 0;
+  for (let c=0;c<cols;c++){
+    const px = x0 + c*cellW;
+    const ux = (px - cx)*inv, ux2 = ux*ux;
+    for (let r=0;r<rows;r++){
+      const py = y0 + r*cellH;
+      const uy = (cy - py)*inv + BOX.cy;
+      const t = ux2 + uy*uy - 1;
+      const f = t*t*t - ux2*uy*uy*uy;
+      if (f > 0) continue;
+      const idx = r*cols + c;
+      cells[cellN++] = idx;
+      dist[idx] = NEAR;
+    }
+  }
+
+  /* 距离场：每格离心形边缘还有几格远，两趟扫描算出来（3-4 近似欧氏距离）。
+     深浅得拿这个当依据 —— 之前直接拿方程值当深浅，它在心的上半部会糊出
+     一大块亮斑、周围一圈陡坡，那道坡就是你看到的台阶 */
+  for (let r=0;r<rows;r++){                      // 顺推
+    const base = r*cols;
+    for (let c=0;c<cols;c++){
+      const idx = base + c;
+      if (dist[idx] === 0) continue;
+      let d = dist[idx];
+      if (c > 0 && dist[idx-1]+3 < d) d = dist[idx-1]+3;
+      if (r > 0){
+        if (dist[idx-cols]+3 < d) d = dist[idx-cols]+3;
+        if (c > 0 && dist[idx-cols-1]+4 < d) d = dist[idx-cols-1]+4;
+        if (c < cols-1 && dist[idx-cols+1]+4 < d) d = dist[idx-cols+1]+4;
+      }
+      dist[idx] = d;
+    }
+  }
+  for (let r=rows-1;r>=0;r--){                   // 逆推
+    const base = r*cols;
+    for (let c=cols-1;c>=0;c--){
+      const idx = base + c;
+      if (dist[idx] === 0) continue;
+      let d = dist[idx];
+      if (c < cols-1 && dist[idx+1]+3 < d) d = dist[idx+1]+3;
+      if (r < rows-1){
+        if (dist[idx+cols]+3 < d) d = dist[idx+cols]+3;
+        if (c < cols-1 && dist[idx+cols+1]+4 < d) d = dist[idx+cols+1]+4;
+        if (c > 0 && dist[idx+cols-1]+4 < d) d = dist[idx+cols-1]+4;
+      }
+      dist[idx] = d;
+    }
+  }
+  let maxD = 1;
+  for (let i=0;i<cellN;i++) if (dist[cells[i]] > maxD) maxD = dist[cells[i]];
+  const span = maxD > 6 ? maxD - 3 : 1;          // 贴边那圈记 3，所以从 3 归一到大数
+
+  /* 第二遍：越靠边缘越深、越靠下越深，两样混成渐变 */
+  for (let i=0;i<cellN;i++){
+    const idx = cells[i];
+    const c = idx % cols, r = (idx/cols)|0;
+    const py = y0 + r*cellH;
+    const uy = (cy - py)*inv + BOX.cy;
+    let dep = (dist[idx] - 3)/span;              // 0 = 贴着边缘，1 = 离边缘最远
+    if (dep < 0) dep = 0; else if (dep > 1) dep = 1;
+    let v = (uy + 1.0)/2.236; if (v < 0) v = 0; else if (v > 1) v = 1;
+    let k = (W_DEPTH*dep + W_POS*v)*LEV_GAIN; if (k > 1) k = 1;
+    let q = (k*SUB)|0; if (q > SUB-1) q = SUB-1;
+    const g = groups[q*3 + ((hash(c,r) + step) % 3)];
+    if (g.n < g.a.length - 1){ g.a[g.n++] = x0 + c*cellW; g.a[g.n++] = py; }
+  }
+
+  /* 整颗心统一沿色带升降 shift 档，再逐小格算颜色。
+     关键就在这一句：最暗的外缘也跟着往浅走，
+     所以是每一部分都在闪，不是只有心口那块在闪 */
+  const lev = [];
+  for (let q=0;q<SUB;q++) lev.push(levelColor((LEVELS-1)*q/(SUB-1) + shift));
+
+  /* 同色同亮度的格子一次画完 */
+  ctx.font = FONT;
+  for (let i=0;i<groups.length;i++){
+    const g = groups[i];
+    if (!g.n) continue;
+    ctx.fillStyle = lev[(i/3)|0];
+    ctx.globalAlpha = SHALPHA[i%3];
+    const a = g.a;
+    for (let j=0;j<g.n;j+=2) ctx.fillText(GLYPH, a[j], a[j+1]);
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* ---------------- 心跳的节拍 ---------------- */
+let bpm = CONFIG.restBpm, target = CONFIG.restBpm, phase = 0.05;
+let last = 0, raf = 0, exciteUntil = 0, tapped = false;
+
+function frame(now){
+  if (!last) last = now;
+  let dt = (now - last)/1000;
+  last = now;
+  if (dt > 0.25) dt = 0.25;                 // 从后台切回来时别让心猛地跳一下
+  const time = now/1000;
+
+  if (tapped && now > exciteUntil) target = CONFIG.restBpm;
+  bpm += (target - bpm)*Math.min(1, dt*2.4);
+  phase = (phase + dt*bpm/60) % 1;
+
+  const heat = Math.max(0, Math.min(1, (bpm - CONFIG.restBpm)/54));
+  const amp  = beatAmp(phase)*(1 + 0.30*heat);
+
+  /* 全闪的两个来源：心跳亮一次 + 一层慢速呼吸闪。
+     刻意压在 2.2Hz 左右，不做更快的高频闪，太快的闪屏看着累也不安全 */
+  const flick = 0.5 + 0.5*Math.sin(time*13.8);
+  const bright = Math.min(1, 0.75*amp + 0.45*flick);
+  const shift = (bright - 0.5)*2*(bright >= 0.5 ? SHIFT_UP : SHIFT_DOWN);
+
+  const k = 1 + 0.075*amp;
+  halo.style.transform = 'translate(-50%,-50%) scale(' + k.toFixed(3) + ')';
+  halo.style.opacity   = (0.28 + 0.52*bright + 0.18*amp).toFixed(3);
+
+  draw(amp, time, shift);
+  bpmEl.textContent = Math.round(bpm);
+
+  raf = requestAnimationFrame(frame);
+}
+
+function poke(){
+  if (REDUCE) return;
+  tapped = true;
+  target = CONFIG.excitedBpm;
+  exciteUntil = performance.now() + CONFIG.excitedMs;
+  if (!sayEl.classList.contains('show')){
+    sayEl.classList.add('show');
+    hintEl.classList.add('gone');
+  }
+}
+
+function start(){
+  layout();
+  /* 第一行称呼、第二行话，各占一行 */
+  const name = (CONFIG.to || '').trim();
+  whoEl.textContent = name;
+  whoEl.style.display = name ? '' : 'none';
+  msgEl.textContent = CONFIG.message || '';
+  sigEl.textContent = CONFIG.signature || '';
+  sigEl.style.display = CONFIG.signature ? '' : 'none';
+
+  if (REDUCE){
+    hintEl.classList.add('gone');
+    sayEl.classList.add('show');
+    draw(0.45, 0, 0);                       // 只画一张静止的图
+    return;
+  }
+  raf = requestAnimationFrame(frame);
+}
+
+stage.addEventListener('pointerdown', poke);
+stage.addEventListener('keydown', function(e){
+  if (e.key === ' ' || e.key === 'Enter') poke();
+});
+
+let rt = 0;
+addEventListener('resize', function(){
+  clearTimeout(rt);
+  rt = setTimeout(function(){ layout(); if (REDUCE) draw(0.45, 0); }, 150);
+});
+addEventListener('visibilitychange', function(){
+  if (document.hidden){ cancelAnimationFrame(raf); raf = 0; }
+  else if (!REDUCE && !raf){ last = 0; raf = requestAnimationFrame(frame); }
+});
+
+start();
+</script>
+</body>
+</html>
